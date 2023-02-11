@@ -490,6 +490,7 @@ impl Default for PaymentCancelType {
         Self(types::PaymentsCancelData {
             cancellation_reason: Some("requested_by_customer".to_string()),
             connector_transaction_id: "".to_string(),
+            connector_metadata: None
         })
     }
 }

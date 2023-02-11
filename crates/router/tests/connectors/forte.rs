@@ -1,9 +1,10 @@
 use masking::Secret;
-use router::types::{self, api, storage::enums};
+use router::types::{self, api, storage::enums, PaymentAddress};
+use api_models::payments::{Address, AddressDetails};
 
 use crate::{
     connector_auth,
-    utils::{self, ConnectorActions},
+    utils::{self, ConnectorActions, PaymentInfo},
 };
 
 #[derive(Clone, Copy)]
@@ -30,6 +31,61 @@ impl utils::Connector for ForteTest {
     fn get_name(&self) -> String {
         "forte".to_string()
     }
+
+    fn get_connector_meta(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({"org_id": "436834", "location_id": "314110"}))
+    }
+}
+
+impl ForteTest {
+    fn get_payment_info() -> Option<PaymentInfo> {
+        Some(PaymentInfo {
+            address: Some(PaymentAddress {
+                billing: Some(Address {
+                    address: Some(AddressDetails {
+                        first_name: Some(Secret::new("John".to_string())),
+                        last_name: Some(Secret::new("Doe".to_string())),
+                        country: Some("US".to_string()),
+                        ..Default::default()
+                    }),
+                    phone: None,
+                }),
+                ..Default::default()
+            }),
+            router_return_url: Some(String::from("http://localhost:8080")),
+            ..Default::default()
+        })
+    }
+
+    fn get_payment_authorize_data(
+        card_number: &str,
+        card_exp_month: &str,
+        card_exp_year: &str,
+        card_cvc: &str,
+        capture_method: enums::CaptureMethod,
+    ) -> Option<types::PaymentsAuthorizeData> {
+        Some(types::PaymentsAuthorizeData {
+            amount: 3500,
+            currency: enums::Currency::USD,
+            payment_method_data: types::api::PaymentMethod::Card(types::api::Card {
+                card_number: Secret::new(card_number.to_string()),
+                card_exp_month: Secret::new(card_exp_month.to_string()),
+                card_exp_year: Secret::new(card_exp_year.to_string()),
+                card_holder_name: Secret::new("John Doe".to_string()),
+                card_cvc: Secret::new(card_cvc.to_string()),
+            }),
+            confirm: true,
+            statement_descriptor_suffix: None,
+            setup_future_usage: None,
+            mandate_id: None,
+            off_session: None,
+            setup_mandate_details: None,
+            capture_method: Some(capture_method),
+            browser_info: None,
+            order_details: None,
+            email: None,
+        })
+    }
 }
 
 static CONNECTOR: ForteTest = ForteTest {};
@@ -39,7 +95,14 @@ static CONNECTOR: ForteTest = ForteTest {};
 #[actix_web::test]
 async fn should_only_authorize_payment() {
     let response = CONNECTOR
-        .authorize_payment(None, None)
+        .authorize_payment(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ),
+        ForteTest::get_payment_info(),)
         .await
         .expect("Authorize payment response");
     assert_eq!(response.status, enums::AttemptStatus::Authorized);
@@ -106,6 +169,7 @@ async fn should_void_authorized_payment() {
             Some(types::PaymentsCancelData {
                 connector_transaction_id: String::from(""),
                 cancellation_reason: Some("requested_by_customer".to_string()),
+                connector_metadata: Some(serde_json::json!({"location_id":"123", "org_id":"123"}))
             }),
             None,
         )

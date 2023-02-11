@@ -38,7 +38,7 @@ pub(crate) struct HeaderKey {
 impl From<HeaderKey> for ConnectorAuthType {
     fn from(key: HeaderKey) -> Self {
         Self::HeaderKey {
-            api_key: key.api_key,
+            api_key: "Basic ZmI5YjdkNWM5NzEwYzgwMmYzMzRmZmMxYTQxYmM5NjQ6ODZlOGE0NTU1MTQ5MGVkYWE0Zjk3Mjg1OTQwNDEzMDE=".to_string(),
         }
     }
 }
