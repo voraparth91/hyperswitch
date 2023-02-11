@@ -16,7 +16,7 @@ use crate::{
     types::{
         self,
         api::{self, ConnectorCommon, ConnectorCommonExt},
-        ErrorResponse, Response, storage,
+        ErrorResponse, Response, storage, ResponseId,
     }
 };
 
@@ -180,11 +180,21 @@ impl
 
     fn get_url(
         &self,
-        _req: &types::PaymentsSyncRouterData,
+        req: &types::PaymentsSyncRouterData,
         _connectors: &settings::Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
-        println!("Parth-3");
-        todo!()
+        let transaction_id = match &req.request.connector_transaction_id {
+                ResponseId::ConnectorTransactionId(x) => x.to_string(),
+                _ => "123".to_string()
+            };
+        let metadata = req
+            .connector_meta_data
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let connector_metadata: ConnectorMetadata = metadata
+            .parse_value("ConnectorMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        Ok(format!("{}organizations/org_{}/locations/loc_{}/transactions/{}", self.base_url(_connectors), connector_metadata.org_id, connector_metadata.location_id, transaction_id))
     }
 
     fn build_request(
