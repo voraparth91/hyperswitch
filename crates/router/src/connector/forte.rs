@@ -31,13 +31,21 @@ where
     Self: ConnectorIntegration<Flow, Request, Response>,{
     fn build_headers(
         &self,
-        _req: &types::RouterData<Flow, Request, Response>,
+        req: &types::RouterData<Flow, Request, Response>,
         _connectors: &settings::Connectors,
     ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
         // println!("_req in hackathon:: {}", auth);
-        let mut header = vec![("X-Forte-Auth-Organization-Id".to_string(),"org_436834".to_string()),
+        let metadata = req
+            .connector_meta_data
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let connector_metadata: ConnectorMetadata = metadata
+            .parse_value("ConnectorMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        let org_value = format!("org_{}", connector_metadata.org_id);
+        let mut header = vec![("X-Forte-Auth-Organization-Id".to_string(), org_value),
         ("Content-Type".to_string(),"application/json".to_string())];
-        let mut api_key = self.get_auth_header(&_req.connector_auth_type)?;
+        let mut api_key = self.get_auth_header(&req.connector_auth_type)?;
         header.append(&mut api_key);
 
         Ok(header)
@@ -425,9 +433,15 @@ impl
         self.common_get_content_type()
     }
 
-    fn get_url(&self, _req: &types::RefundsRouterData<api::Execute>, _connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
-        println!("Parth-7");
-        todo!()
+    fn get_url(&self, req: &types::RefundsRouterData<api::Execute>, _connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
+        let metadata = req
+            .connector_meta_data
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let connector_metadata: ConnectorMetadata = metadata
+            .parse_value("ConnectorMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        Ok(format!("{}organizations/org_{}/locations/loc_{}/transactions", self.base_url(_connectors), connector_metadata.org_id, connector_metadata.location_id))
     }
 
     fn get_request_body(&self, req: &types::RefundsRouterData<api::Execute>) -> CustomResult<Option<String>,errors::ConnectorError> {

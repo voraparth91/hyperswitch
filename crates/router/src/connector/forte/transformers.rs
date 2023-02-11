@@ -5,7 +5,7 @@ use crate::{
     connector::utils::{self, AddressDetailsData, PaymentsRequestData},
     core::errors,
     pii::PeekInterface,
-    types::{self, api, storage::{enums, self}}, logger, 
+    types::{self, api, storage::{enums, self}}, 
 };
 
 //TODO: Fill the struct with respective fields
@@ -198,7 +198,6 @@ impl TryFrom<&types::PaymentsCancelRouterData> for ForteCancelRequest {
         let payment_metadata: PaymentMetadata = metadata
             .parse_value("PaymentMetadata")
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
-        println!("AUTH_CODE - {}", payment_metadata.authorization_code);
         Ok(Self {
             action: String::from("void"),
             authorization_code: payment_metadata.authorization_code,
@@ -211,41 +210,44 @@ impl TryFrom<&types::PaymentsCancelRouterData> for ForteCancelRequest {
 // REFUND :
 // Type definition for RefundRequest
 #[derive(Default, Debug, Serialize)]
-pub struct ForteRefundRequest {}
+pub struct ForteRefundRequest {
+    action: String,
+    authorization_amount: i64,
+    original_transaction_id: String,
+    authorization_code: String
+}
 
 impl<F> TryFrom<&types::RefundsRouterData<F>> for ForteRefundRequest {
-    type Error = error_stack::Report<errors::ParsingError>;
-    fn try_from(_item: &types::RefundsRouterData<F>) -> Result<Self,Self::Error> {
-        println!("Parth2");
-       todo!()
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(item: &types::RefundsRouterData<F>) -> Result<Self,Self::Error> {
+        let action = "reverse".to_string();
+        let authorization_amount = item.request.amount;
+        let original_transaction_id = item.request.connector_transaction_id.clone();
+        let metadata = item.request.connector_metadata
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let payment_metadata: PaymentMetadata = metadata
+            .parse_value("PaymentMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        let authorization_code = payment_metadata.authorization_code;
+
+        Ok(Self {
+            action,
+            authorization_amount,
+            original_transaction_id,
+            authorization_code
+        })
     }
 }
 
 // Type definition for Refund Response
-
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Default, Deserialize, Clone)]
-pub enum RefundStatus {
-    Succeeded,
-    Failed,
-    #[default]
-    Processing,
-}
-
-impl From<RefundStatus> for enums::RefundStatus {
-    fn from(item: RefundStatus) -> Self {
-        match item {
-            RefundStatus::Succeeded => Self::Success,
-            RefundStatus::Failed => Self::Failure,
-            RefundStatus::Processing => Self::Pending,
-            //TODO: Review mapping
-        }
-    }
-}
-
 //TODO: Fill the struct with respective fields
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RefundResponse {
+    transaction_id: String,
+    response: ResponseDetails,
+    authorization_code: String,
+    action: String 
 }
 
 impl TryFrom<types::RefundsResponseRouterData<api::Execute, RefundResponse>>
@@ -253,10 +255,19 @@ impl TryFrom<types::RefundsResponseRouterData<api::Execute, RefundResponse>>
 {
     type Error = error_stack::Report<errors::ParsingError>;
     fn try_from(
-        _item: types::RefundsResponseRouterData<api::Execute, RefundResponse>,
+        item: types::RefundsResponseRouterData<api::Execute, RefundResponse>,
     ) -> Result<Self, Self::Error> {
-        println!("Parth3");
-        todo!()
+        Ok(Self {
+            response: Ok(types::RefundsResponseData {
+                connector_refund_id: item.response.transaction_id,
+                refund_status: match item.response.response.response_type {
+                    FortePaymentStatus::A => enums::RefundStatus::Success,
+                    FortePaymentStatus::D => enums::RefundStatus::Failure,
+                    FortePaymentStatus::E => enums::RefundStatus::Failure,
+                }
+            }),
+            ..item.data
+        })
     }
 }
 
