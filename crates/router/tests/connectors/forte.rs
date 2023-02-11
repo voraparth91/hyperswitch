@@ -139,7 +139,14 @@ async fn should_partially_capture_authorized_payment() {
 #[actix_web::test]
 async fn should_sync_authorized_payment() {
     let authorize_response = CONNECTOR
-        .authorize_payment(None, None)
+        .authorize_payment(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ),
+        ForteTest::get_payment_info(),)
         .await
         .expect("Authorize payment response");
     let txn_id = utils::get_connector_transaction_id(authorize_response.response);
