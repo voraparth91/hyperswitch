@@ -114,15 +114,17 @@ impl From<FortePaymentStatus> for enums::AttemptStatus {
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FortePaymentsResponse {
     transaction_id: String,
-    response: ResponseDetails,
-    authorization_code: String,
+    pub response: ResponseDetails,
+    authorization_code: Option<String>,
     authorization_amount: Option<f64>,
     action: String
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResponseDetails {
-    response_type: FortePaymentStatus
+    pub response_type: FortePaymentStatus,
+    pub response_desc: String,
+    pub response_code: String
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -178,13 +180,16 @@ impl<F,T> TryFrom<types::ResponseRouterData<F, FortePaymentsResponse, T, types::
                 redirection_data: None,
                 redirect: false,
                 mandate_reference: None,
-                connector_metadata: Some(
-                    serde_json::to_value( PaymentMetadata {
-                        authorization_code: item.response.authorization_code
-                    })
-                    .into_report()
-                    .change_context(errors::ParsingError)?,
-                ),
+                connector_metadata: match item.response.authorization_code {
+                    Some(x) => Some(
+                        serde_json::to_value( PaymentMetadata {
+                            authorization_code: x
+                        })
+                        .into_report()
+                        .change_context(errors::ParsingError)?,
+                    ),
+                    None => None
+                }
             }),
             amount_captured: match item.response.authorization_amount {
                 Some(x) => Some(x as i64),

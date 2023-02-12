@@ -71,6 +71,24 @@ impl ConnectorCommon for Forte {
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
         Ok(vec![(headers::AUTHORIZATION.to_string(), auth.api_key)])
     }
+
+    fn build_error_response(
+        &self,
+        res: types::Response,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        logger::debug!(payu_error_response=?res);
+        let response: forte::FortePaymentsResponse = res
+            .response
+            .parse_struct("Forte ErrorResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+
+        Ok(ErrorResponse {
+            status_code: res.status_code,
+            code: response.response.response_code,
+            message: response.response.response_desc,
+            reason: None,
+        })
+    }
 }
 
 impl api::Payment for Forte {}
