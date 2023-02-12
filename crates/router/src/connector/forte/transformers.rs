@@ -321,11 +321,22 @@ impl TryFrom<types::RefundsResponseRouterData<api::Execute, RefundResponse>>
 
 impl TryFrom<types::RefundsResponseRouterData<api::RSync, RefundResponse>> for types::RefundsRouterData<api::RSync>
 {
-     type Error = error_stack::Report<errors::ParsingError>;
-    fn try_from(_item: types::RefundsResponseRouterData<api::RSync, RefundResponse>) -> Result<Self,Self::Error> {
-        println!("Parth4");
-         todo!()
-     }
+    type Error = error_stack::Report<errors::ParsingError>;
+    fn try_from(
+        item: types::RefundsResponseRouterData<api::RSync, RefundResponse>,
+    ) -> Result<Self, Self::Error> {
+        Ok(Self {
+            response: Ok(types::RefundsResponseData {
+                connector_refund_id: item.response.transaction_id,
+                refund_status: match item.response.response.response_type {
+                    FortePaymentStatus::A => enums::RefundStatus::Success,
+                    FortePaymentStatus::D => enums::RefundStatus::Failure,
+                    FortePaymentStatus::E => enums::RefundStatus::Failure,
+                },
+            }),
+            ..item.data
+        })
+    }
  }
 
 //TODO: Fill the struct with respective fields

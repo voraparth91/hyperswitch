@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     configs::settings,
-    utils::{self, BytesExt},
+    utils::{self, BytesExt, OptionExt},
     core::{
         errors::{self, CustomResult},
         payments,
@@ -514,9 +514,18 @@ impl
         self.common_get_content_type()
     }
 
-    fn get_url(&self, _req: &types::RefundSyncRouterData,_connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
-        println!("Parth-8");
-        todo!()
+    fn get_url(&self, req: &types::RefundSyncRouterData,_connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
+        let metadata = req
+            .connector_meta_data
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let connector_metadata: ConnectorMetadata = metadata
+            .parse_value("ConnectorMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        let connector_refund_id = req.request.connector_refund_id.clone()
+            .get_required_value("connector_refund_id")
+            .change_context(errors::ConnectorError::MissingRequiredField { field_name: "connector_refund_id" })?; 
+        Ok(format!("{}organizations/org_{}/locations/loc_{}/transactions/{}", self.base_url(_connectors), connector_metadata.org_id, connector_metadata.location_id, connector_refund_id))
     }
 
     fn build_request(
@@ -551,7 +560,18 @@ impl
     }
 
     fn get_error_response(&self, res: Response) -> CustomResult<ErrorResponse,errors::ConnectorError> {
-        self.build_error_response(res)
+        logger::debug!(payu_error_response=?res);
+        let response: forte::FortePaymentsResponse = res
+            .response
+            .parse_struct("Forte ErrorResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+
+        Ok(ErrorResponse {
+            status_code: res.status_code,
+            code: response.response.response_code,
+            message: response.response.response_desc,
+            reason: None,
+        })
     }
 }
 
