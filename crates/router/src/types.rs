@@ -123,6 +123,7 @@ pub struct PaymentsCaptureData {
     pub currency: storage_enums::Currency,
     pub connector_transaction_id: String,
     pub amount: i64,
+    pub connector_metadata: Option<serde_json::Value>
 }
 
 #[derive(Debug, Clone)]

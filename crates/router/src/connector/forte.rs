@@ -268,19 +268,26 @@ impl
 
     fn get_url(
         &self,
-        _req: &types::PaymentsCaptureRouterData,
+        req: &types::PaymentsCaptureRouterData,
         _connectors: &settings::Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
-        println!("Parth-4");
-        todo!()
+        let metadata = req
+            .connector_meta_data
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let connector_metadata: ConnectorMetadata = metadata
+            .parse_value("ConnectorMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        Ok(format!("{}organizations/org_{}/locations/loc_{}/transactions", self.base_url(_connectors), connector_metadata.org_id, connector_metadata.location_id))
     }
 
     fn get_request_body(
         &self,
-        _req: &types::PaymentsCaptureRouterData,
+        req: &types::PaymentsCaptureRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
-        println!("Parth-5");
-        todo!()
+        let forte_req =
+            utils::Encode::<forte::ForteCaptureRequest>::convert_and_encode(req).change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        Ok(Some(forte_req))
     }
 
     fn build_request(
@@ -290,11 +297,10 @@ impl
     ) -> CustomResult<Option<services::Request>, errors::ConnectorError> {
         Ok(Some(
             services::RequestBuilder::new()
-                .method(services::Method::Post)
+                .method(services::Method::Put)
                 .url(&types::PaymentsCaptureType::get_url(self, req, connectors)?)
-                .headers(types::PaymentsCaptureType::get_headers(
-                    self, req, connectors,
-                )?)
+                .headers(types::PaymentsCaptureType::get_headers(self, req, connectors,)?)
+                .body(types::PaymentsCaptureType::get_request_body(self, req)?)
                 .build(),
         ))
     }

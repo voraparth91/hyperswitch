@@ -116,6 +116,7 @@ pub struct FortePaymentsResponse {
     transaction_id: String,
     response: ResponseDetails,
     authorization_code: String,
+    authorization_amount: Option<f64>,
     action: String
 }
 
@@ -151,6 +152,13 @@ pub fn convert_status(item: FortePaymentStatus, action: String) -> enums::Attemp
             FortePaymentStatus::E => enums::AttemptStatus::Failure,
         }
     }
+    else if action == "capture" {
+        match item {
+            FortePaymentStatus::A => enums::AttemptStatus::Charged,
+            FortePaymentStatus::D => enums::AttemptStatus::AuthorizationFailed,
+            FortePaymentStatus::E => enums::AttemptStatus::Failure,
+        }
+    }
     else {
         match item {
             FortePaymentStatus::A => enums::AttemptStatus::Charged,
@@ -178,6 +186,10 @@ impl<F,T> TryFrom<types::ResponseRouterData<F, FortePaymentsResponse, T, types::
                     .change_context(errors::ParsingError)?,
                 ),
             }),
+            amount_captured: match item.response.authorization_amount {
+                Some(x) => Some(x as i64),
+                None => None
+            },
             ..item.data
         })
     }
@@ -202,6 +214,37 @@ impl TryFrom<&types::PaymentsCancelRouterData> for ForteCancelRequest {
             action: String::from("void"),
             authorization_code: payment_metadata.authorization_code,
             entered_by: String::from("aditya")
+        })
+    }
+}
+
+#[derive(Default, Debug, Serialize)]
+pub struct ForteCaptureRequest {
+    action: String,
+    authorization_code: String,
+    transaction_id: String,
+    authorization_amount: i64
+}
+
+impl TryFrom<&types::PaymentsCaptureRouterData> for ForteCaptureRequest {
+    type Error = error_stack::Report<errors::ConnectorError>;
+    fn try_from(item: &types::PaymentsCaptureRouterData) -> Result<Self, Self::Error> {
+        let authorization_amount = match item.request.amount_to_capture {
+            Some(x) => x,
+            _ => 0
+        };
+        let transaction_id = item.request.connector_transaction_id.clone();
+        let metadata = item.request.connector_metadata
+            .clone()
+            .ok_or(errors::ConnectorError::RequestEncodingFailed)?;
+        let payment_metadata: PaymentMetadata = metadata
+            .parse_value("PaymentMetadata")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        Ok(Self {
+            action: String::from("capture"),
+            authorization_code: payment_metadata.authorization_code,
+            authorization_amount,
+            transaction_id
         })
     }
 }
