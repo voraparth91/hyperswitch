@@ -112,7 +112,17 @@ async fn should_only_authorize_payment() {
 #[actix_web::test]
 async fn should_capture_authorized_payment() {
     let response = CONNECTOR
-        .authorize_and_capture_payment(None, None, None)
+        .authorize_and_capture_payment(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ), Some(types::PaymentsCaptureData {
+            amount_to_capture: Some(50),
+            connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
+            ..utils::PaymentCaptureType::default().0
+        }), ForteTest::get_payment_info())
         .await
         .expect("Capture payment response");
     assert_eq!(response.status, enums::AttemptStatus::Charged);
@@ -123,12 +133,19 @@ async fn should_capture_authorized_payment() {
 async fn should_partially_capture_authorized_payment() {
     let response = CONNECTOR
         .authorize_and_capture_payment(
-            None,
+            ForteTest::get_payment_authorize_data(
+                "4242424242424242",
+                "10",
+                "2025",
+                "123",
+                enums::CaptureMethod::Manual,
+            ),
             Some(types::PaymentsCaptureData {
                 amount_to_capture: Some(50),
+                connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
                 ..utils::PaymentCaptureType::default().0
             }),
-            None,
+            ForteTest::get_payment_info(),
         )
         .await
         .expect("Capture payment response");
