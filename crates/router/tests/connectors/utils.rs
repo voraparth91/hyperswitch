@@ -20,7 +20,7 @@ pub trait Connector {
     }
     /// interval in seconds to be followed when making the subsequent request whenever needed
     fn get_request_interval(&self) -> u64 {
-        5
+        10
     }
 }
 
@@ -178,6 +178,7 @@ pub trait ConnectorActions: Connector {
     async fn refund_payment(
         &self,
         transaction_id: String,
+        connector_metadata: Option<serde_json::Value>,
         payment_data: Option<types::RefundsData>,
         payment_info: Option<PaymentInfo>,
     ) -> Result<types::RefundExecuteRouterData, Report<ConnectorError>> {
@@ -204,12 +205,12 @@ pub trait ConnectorActions: Connector {
             .authorize_and_capture_payment(authorize_data, capture_data, payment_info.clone())
             .await
             .unwrap();
-        let txn_id = self.get_connector_transaction_id_from_capture_data(response);
-
+        let txn_id = self.get_connector_transaction_id_from_capture_data(response.clone());
+        let md = self.get_payment_metadata(response.clone());
         //try refund for previous payment
         tokio::time::sleep(Duration::from_secs(self.get_request_interval())).await; // to avoid 404 error
         Ok(self
-            .refund_payment(txn_id.unwrap(), refund_data, payment_info)
+            .refund_payment(txn_id.unwrap(),md, refund_data, payment_info)
             .await
             .unwrap())
     }
@@ -227,10 +228,12 @@ pub trait ConnectorActions: Connector {
             .unwrap();
 
         //try refund for previous payment
+        let r = response.clone();
         let transaction_id = get_connector_transaction_id(response.response).unwrap();
+        let md = self.get_payment_metadata_authorize(r);
         tokio::time::sleep(Duration::from_secs(self.get_request_interval())).await; // to avoid 404 error
         Ok(self
-            .refund_payment(transaction_id, refund_data, payment_info)
+            .refund_payment(transaction_id, md, refund_data, payment_info)
             .await
             .unwrap())
     }
@@ -248,10 +251,12 @@ pub trait ConnectorActions: Connector {
             .unwrap();
 
         //try refund for previous payment
+        let r = response.clone();
         let transaction_id = get_connector_transaction_id(response.response).unwrap();
+        let md = self.get_payment_metadata(r);
         tokio::time::sleep(Duration::from_secs(self.get_request_interval())).await; // to avoid 404 error
         Ok(self
-            .refund_payment(transaction_id, refund_data, payment_info)
+            .refund_payment(transaction_id, md, refund_data, payment_info)
             .await
             .unwrap())
     }
@@ -269,12 +274,15 @@ pub trait ConnectorActions: Connector {
             .unwrap();
 
         //try refund for previous payment
+        let r = response.clone();
         let transaction_id = get_connector_transaction_id(response.response).unwrap();
+        let md = self.get_payment_metadata_authorize(r);
         for _x in 0..2 {
             tokio::time::sleep(Duration::from_secs(self.get_request_interval())).await; // to avoid 404 error
             let refund_response = self
                 .refund_payment(
                     transaction_id.clone(),
+                    md.clone(),
                     refund_data.clone(),
                     payment_info.clone(),
                 )
@@ -372,6 +380,32 @@ pub trait ConnectorActions: Connector {
             connector_meta_data: self.get_connector_meta(),
             amount_captured: None,
             access_token: info.and_then(|a| a.access_token),
+        }
+    }
+
+    fn get_payment_metadata(
+        &self,
+        response: types::PaymentsCaptureRouterData,
+    ) -> Option<serde_json::Value> {
+        match response.response {
+            Ok(types::PaymentsResponseData::TransactionResponse { connector_metadata, .. }) => {
+                return connector_metadata
+            }
+            Ok(types::PaymentsResponseData::SessionResponse { .. }) => None,
+            Err(_) => None,
+        }
+    }
+
+    fn get_payment_metadata_authorize(
+        &self,
+        response: types::PaymentsAuthorizeRouterData,
+    ) -> Option<serde_json::Value> {
+        match response.response {
+            Ok(types::PaymentsResponseData::TransactionResponse { connector_metadata, .. }) => {
+                return connector_metadata
+            }
+            Ok(types::PaymentsResponseData::SessionResponse { .. }) => None,
+            Err(_) => None,
         }
     }
 
@@ -481,6 +515,7 @@ impl Default for PaymentCaptureType {
             currency: enums::Currency::USD,
             connector_transaction_id: "".to_string(),
             amount: 100,
+            connector_metadata: None
         })
     }
 }
@@ -490,6 +525,7 @@ impl Default for PaymentCancelType {
         Self(types::PaymentsCancelData {
             cancellation_reason: Some("requested_by_customer".to_string()),
             connector_transaction_id: "".to_string(),
+            connector_metadata: None
         })
     }
 }

@@ -1,6 +1,6 @@
-use api_models::payments::{Address, AddressDetails};
 use masking::Secret;
 use router::types::{self, api, storage::enums, PaymentAddress};
+use api_models::payments::{Address, AddressDetails};
 
 use crate::{
     connector_auth,
@@ -8,14 +8,14 @@ use crate::{
 };
 
 #[derive(Clone, Copy)]
-struct AdyenTest;
-impl ConnectorActions for AdyenTest {}
-impl utils::Connector for AdyenTest {
+struct ForteTest;
+impl ConnectorActions for ForteTest {}
+impl utils::Connector for ForteTest {
     fn get_data(&self) -> types::api::ConnectorData {
-        use router::connector::Adyen;
+        use router::connector::Forte;
         types::api::ConnectorData {
-            connector: Box::new(&Adyen),
-            connector_name: types::Connector::Adyen,
+            connector: Box::new(&Forte),
+            connector_name: types::Connector::Forte,
             get_token: types::api::GetToken::Connector,
         }
     }
@@ -23,22 +23,28 @@ impl utils::Connector for AdyenTest {
     fn get_auth_token(&self) -> types::ConnectorAuthType {
         types::ConnectorAuthType::from(
             connector_auth::ConnectorAuthentication::new()
-                .adyen
+                .forte
                 .expect("Missing connector authentication configuration"),
         )
     }
 
     fn get_name(&self) -> String {
-        "adyen".to_string()
+        "forte".to_string()
+    }
+
+    fn get_connector_meta(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({"org_id": "436834", "location_id": "314110"}))
     }
 }
 
-impl AdyenTest {
+impl ForteTest {
     fn get_payment_info() -> Option<PaymentInfo> {
         Some(PaymentInfo {
             address: Some(PaymentAddress {
                 billing: Some(Address {
                     address: Some(AddressDetails {
+                        first_name: Some(Secret::new("John".to_string())),
+                        last_name: Some(Secret::new("Doe".to_string())),
                         country: Some("US".to_string()),
                         ..Default::default()
                     }),
@@ -82,23 +88,21 @@ impl AdyenTest {
     }
 }
 
-static CONNECTOR: AdyenTest = AdyenTest {};
+static CONNECTOR: ForteTest = ForteTest {};
 
 // Cards Positive Tests
 // Creates a payment using the manual capture flow (Non 3DS).
 #[actix_web::test]
 async fn should_only_authorize_payment() {
     let response = CONNECTOR
-        .authorize_payment(
-            AdyenTest::get_payment_authorize_data(
-                "4111111111111111",
-                "03",
-                "2030",
-                "737",
-                enums::CaptureMethod::Manual,
-            ),
-            AdyenTest::get_payment_info(),
-        )
+        .authorize_payment(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ),
+        ForteTest::get_payment_info(),)
         .await
         .expect("Authorize payment response");
     assert_eq!(response.status, enums::AttemptStatus::Authorized);
@@ -108,17 +112,17 @@ async fn should_only_authorize_payment() {
 #[actix_web::test]
 async fn should_capture_authorized_payment() {
     let response = CONNECTOR
-        .authorize_and_capture_payment(
-            AdyenTest::get_payment_authorize_data(
-                "370000000000002",
-                "03",
-                "2030",
-                "7373",
-                enums::CaptureMethod::Manual,
-            ),
-            None,
-            AdyenTest::get_payment_info(),
-        )
+        .authorize_and_capture_payment(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ), Some(types::PaymentsCaptureData {
+            amount_to_capture: Some(50),
+            connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
+            ..utils::PaymentCaptureType::default().0
+        }), ForteTest::get_payment_info())
         .await
         .expect("Capture payment response");
     assert_eq!(response.status, enums::AttemptStatus::Charged);
@@ -129,22 +133,55 @@ async fn should_capture_authorized_payment() {
 async fn should_partially_capture_authorized_payment() {
     let response = CONNECTOR
         .authorize_and_capture_payment(
-            AdyenTest::get_payment_authorize_data(
-                "4293189100000008",
-                "03",
-                "2030",
-                "737",
+            ForteTest::get_payment_authorize_data(
+                "4242424242424242",
+                "10",
+                "2025",
+                "123",
                 enums::CaptureMethod::Manual,
             ),
             Some(types::PaymentsCaptureData {
                 amount_to_capture: Some(50),
+                connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
                 ..utils::PaymentCaptureType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            ForteTest::get_payment_info(),
         )
         .await
         .expect("Capture payment response");
     assert_eq!(response.status, enums::AttemptStatus::Charged);
+}
+
+// Synchronizes a payment using the manual capture flow (Non 3DS).
+#[actix_web::test]
+async fn should_sync_authorized_payment() {
+    let authorize_response = CONNECTOR
+        .authorize_payment(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ),
+        ForteTest::get_payment_info(),)
+        .await
+        .expect("Authorize payment response");
+    let txn_id = utils::get_connector_transaction_id(authorize_response.response);
+    let response = CONNECTOR
+        .psync_retry_till_status_matches(
+            enums::AttemptStatus::Authorized,
+            Some(types::PaymentsSyncData {
+                connector_transaction_id: router::types::ResponseId::ConnectorTransactionId(
+                    txn_id.unwrap(),
+                ),
+                encoded_data: None,
+                capture_method: None,
+            }),
+            None,
+        )
+        .await
+        .expect("PSync response");
+    assert_eq!(response.status, enums::AttemptStatus::Authorized,);
 }
 
 // Voids a payment using the manual capture flow (Non 3DS).
@@ -152,19 +189,19 @@ async fn should_partially_capture_authorized_payment() {
 async fn should_void_authorized_payment() {
     let response = CONNECTOR
         .authorize_and_void_payment(
-            AdyenTest::get_payment_authorize_data(
-                "4293189100000008",
-                "03",
-                "2030",
-                "737",
+            ForteTest::get_payment_authorize_data(
+                "4242424242424242",
+                "10",
+                "2025",
+                "123",
                 enums::CaptureMethod::Manual,
             ),
             Some(types::PaymentsCancelData {
                 connector_transaction_id: String::from(""),
                 cancellation_reason: Some("requested_by_customer".to_string()),
-                connector_metadata: None
+                connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"}))
             }),
-            AdyenTest::get_payment_info(),
+            ForteTest::get_payment_info(),
         )
         .await
         .expect("Void payment response");
@@ -175,22 +212,22 @@ async fn should_void_authorized_payment() {
 #[actix_web::test]
 async fn should_refund_manually_captured_payment() {
     let response = CONNECTOR
-        .capture_payment_and_refund(
-            AdyenTest::get_payment_authorize_data(
-                "370000000000002",
-                "03",
-                "2030",
-                "7373",
-                enums::CaptureMethod::Manual,
-            ),
-            None,
-            Some(types::RefundsData {
-                refund_amount: 1500,
-                reason: Some("CUSTOMER REQUEST".to_string()),
-                ..utils::PaymentRefundType::default().0
-            }),
-            AdyenTest::get_payment_info(),
-        )
+        .capture_payment_and_refund(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ), Some(types::PaymentsCaptureData {
+            amount_to_capture: Some(50),
+            connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
+            ..utils::PaymentCaptureType::default().0
+        }),  Some(types::RefundsData {
+            refund_amount: 50,
+            connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
+            reason: Some("CUSTOMER REQUEST".to_string()),
+            ..utils::PaymentRefundType::default().0
+        }), ForteTest::get_payment_info())
         .await
         .unwrap();
     assert_eq!(
@@ -204,20 +241,35 @@ async fn should_refund_manually_captured_payment() {
 async fn should_partially_refund_manually_captured_payment() {
     let response = CONNECTOR
         .capture_payment_and_refund(
-            AdyenTest::get_payment_authorize_data(
-                "2222400070000005",
-                "03",
-                "2030",
-                "737",
-                enums::CaptureMethod::Manual,
-            ),
+            None,
             None,
             Some(types::RefundsData {
-                refund_amount: 1500,
-                reason: Some("CUSTOMER REQUEST".to_string()),
+                refund_amount: 50,
                 ..utils::PaymentRefundType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.response.unwrap().refund_status,
+        enums::RefundStatus::Success,
+    );
+}
+
+// Synchronizes a refund using the manual capture flow (Non 3DS).
+#[actix_web::test]
+async fn should_sync_manually_captured_refund() {
+    let refund_response = CONNECTOR
+        .capture_payment_and_refund(None, None, None, None)
+        .await
+        .unwrap();
+    let response = CONNECTOR
+        .rsync_retry_till_status_matches(
+            enums::RefundStatus::Success,
+            refund_response.response.unwrap().connector_refund_id,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -230,41 +282,39 @@ async fn should_partially_refund_manually_captured_payment() {
 // Creates a payment using the automatic capture flow (Non 3DS).
 #[actix_web::test]
 async fn should_make_payment() {
-    let authorize_response = CONNECTOR
-        .make_payment(
-            AdyenTest::get_payment_authorize_data(
-                "2222400070000005",
-                "03",
-                "2030",
-                "737",
-                enums::CaptureMethod::Manual,
-            ),
-            AdyenTest::get_payment_info(),
+    let authorize_response = CONNECTOR.make_payment(None, None).await.unwrap();
+    assert_eq!(authorize_response.status, enums::AttemptStatus::Charged);
+}
+
+// Synchronizes a payment using the automatic capture flow (Non 3DS).
+#[actix_web::test]
+async fn should_sync_auto_captured_payment() {
+    let authorize_response = CONNECTOR.make_payment(None, None).await.unwrap();
+    assert_eq!(authorize_response.status, enums::AttemptStatus::Charged);
+    let txn_id = utils::get_connector_transaction_id(authorize_response.response);
+    assert_ne!(txn_id, None, "Empty connector transaction id");
+    let response = CONNECTOR
+        .psync_retry_till_status_matches(
+            enums::AttemptStatus::Charged,
+            Some(types::PaymentsSyncData {
+                connector_transaction_id: router::types::ResponseId::ConnectorTransactionId(
+                    txn_id.unwrap(),
+                ),
+                encoded_data: None,
+                capture_method: None,
+            }),
+            None,
         )
         .await
         .unwrap();
-    assert_eq!(authorize_response.status, enums::AttemptStatus::Charged);
+    assert_eq!(response.status, enums::AttemptStatus::Charged,);
 }
 
 // Refunds a payment using the automatic capture flow (Non 3DS).
 #[actix_web::test]
 async fn should_refund_auto_captured_payment() {
     let response = CONNECTOR
-        .make_payment_and_refund(
-            AdyenTest::get_payment_authorize_data(
-                "2222400070000005",
-                "03",
-                "2030",
-                "737",
-                enums::CaptureMethod::Automatic,
-            ),
-            Some(types::RefundsData {
-                refund_amount: 1000,
-                reason: Some("CUSTOMER REQUEST".to_string()),
-                ..utils::PaymentRefundType::default().0
-            }),
-            AdyenTest::get_payment_info(),
-        )
+        .make_payment_and_refund(None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -278,19 +328,12 @@ async fn should_refund_auto_captured_payment() {
 async fn should_partially_refund_succeeded_payment() {
     let refund_response = CONNECTOR
         .make_payment_and_refund(
-            AdyenTest::get_payment_authorize_data(
-                "4293189100000008",
-                "03",
-                "2030",
-                "737",
-                enums::CaptureMethod::Automatic,
-            ),
+            None,
             Some(types::RefundsData {
-                refund_amount: 500,
-                reason: Some("CUSTOMER REQUEST".to_string()),
+                refund_amount: 50,
                 ..utils::PaymentRefundType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await
         .unwrap();
@@ -305,21 +348,36 @@ async fn should_partially_refund_succeeded_payment() {
 async fn should_refund_succeeded_payment_multiple_times() {
     CONNECTOR
         .make_payment_and_multiple_refund(
-            AdyenTest::get_payment_authorize_data(
-                "2222400070000005",
-                "03",
-                "2030",
-                "737",
-                enums::CaptureMethod::Automatic,
-            ),
+            None,
             Some(types::RefundsData {
-                refund_amount: 100,
-                reason: Some("CUSTOMER REQUEST".to_string()),
+                refund_amount: 50,
                 ..utils::PaymentRefundType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await;
+}
+
+// Synchronizes a refund using the automatic capture flow (Non 3DS).
+#[actix_web::test]
+async fn should_sync_refund() {
+    let refund_response = CONNECTOR
+        .make_payment_and_refund(None, None, None)
+        .await
+        .unwrap();
+    let response = CONNECTOR
+        .rsync_retry_till_status_matches(
+            enums::RefundStatus::Success,
+            refund_response.response.unwrap().connector_refund_id,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.response.unwrap().refund_status,
+        enums::RefundStatus::Success,
+    );
 }
 
 // Cards Negative scenerios
@@ -335,13 +393,13 @@ async fn should_fail_payment_for_incorrect_card_number() {
                 }),
                 ..utils::PaymentAuthorizeType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await
         .unwrap();
     assert_eq!(
         response.response.unwrap_err().message,
-        "Invalid card number",
+        "Your card number is incorrect.".to_string(),
     );
 }
 
@@ -357,12 +415,15 @@ async fn should_fail_payment_for_empty_card_number() {
                 }),
                 ..utils::PaymentAuthorizeType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await
         .unwrap();
     let x = response.response.unwrap_err();
-    assert_eq!(x.message, "Missing payment method details: number",);
+    assert_eq!(
+        x.message,
+        "You passed an empty string for 'payment_method_data[card][number]'.",
+    );
 }
 
 // Creates a payment with incorrect CVC.
@@ -377,13 +438,13 @@ async fn should_fail_payment_for_incorrect_cvc() {
                 }),
                 ..utils::PaymentAuthorizeType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await
         .unwrap();
     assert_eq!(
         response.response.unwrap_err().message,
-        "CVC is not the right length",
+        "Your card's security code is invalid.".to_string(),
     );
 }
 
@@ -399,13 +460,13 @@ async fn should_fail_payment_for_invalid_exp_month() {
                 }),
                 ..utils::PaymentAuthorizeType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await
         .unwrap();
     assert_eq!(
         response.response.unwrap_err().message,
-        "The provided Expiry Date is not valid.: Expiry month should be between 1 and 12 inclusive: 20",
+        "Your card's expiration month is invalid.".to_string(),
     );
 }
 
@@ -421,23 +482,63 @@ async fn should_fail_payment_for_incorrect_expiry_year() {
                 }),
                 ..utils::PaymentAuthorizeType::default().0
             }),
-            AdyenTest::get_payment_info(),
+            None,
         )
         .await
         .unwrap();
-    assert_eq!(response.response.unwrap_err().message, "Expired Card",);
+    assert_eq!(
+        response.response.unwrap_err().message,
+        "Your card's expiration year is invalid.".to_string(),
+    );
+}
+
+// Voids a payment using automatic capture flow (Non 3DS).
+#[actix_web::test]
+async fn should_fail_void_payment_for_auto_capture() {
+    let authorize_response = CONNECTOR.make_payment(None, None).await.unwrap();
+    assert_eq!(authorize_response.status, enums::AttemptStatus::Charged);
+    let txn_id = utils::get_connector_transaction_id(authorize_response.response);
+    assert_ne!(txn_id, None, "Empty connector transaction id");
+    let void_response = CONNECTOR
+        .void_payment(txn_id.unwrap(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        void_response.response.unwrap_err().message,
+        "You cannot cancel this PaymentIntent because it has a status of succeeded."
+    );
 }
 
 // Captures a payment using invalid connector payment id.
 #[actix_web::test]
 async fn should_fail_capture_for_invalid_payment() {
     let capture_response = CONNECTOR
-        .capture_payment("123456789".to_string(), None, AdyenTest::get_payment_info())
+        .capture_payment("123456789".to_string(), None, None)
         .await
         .unwrap();
     assert_eq!(
         capture_response.response.unwrap_err().message,
-        String::from("Original pspReference required for this operation")
+        String::from("No such payment_intent: '123456789'")
+    );
+}
+
+// Refunds a payment with refund amount higher than payment amount.
+#[actix_web::test]
+async fn should_fail_for_refund_amount_higher_than_payment_amount() {
+    let response = CONNECTOR
+        .make_payment_and_refund(
+            None,
+            Some(types::RefundsData {
+                refund_amount: 150,
+                ..utils::PaymentRefundType::default().0
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.response.unwrap_err().message,
+        "Refund amount (₹1.50) is greater than charge amount (₹1.00)",
     );
 }
 
