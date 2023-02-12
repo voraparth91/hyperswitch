@@ -212,7 +212,22 @@ async fn should_void_authorized_payment() {
 #[actix_web::test]
 async fn should_refund_manually_captured_payment() {
     let response = CONNECTOR
-        .capture_payment_and_refund(None, None, None, None)
+        .capture_payment_and_refund(ForteTest::get_payment_authorize_data(
+            "4242424242424242",
+            "10",
+            "2025",
+            "123",
+            enums::CaptureMethod::Manual,
+        ), Some(types::PaymentsCaptureData {
+            amount_to_capture: Some(50),
+            connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
+            ..utils::PaymentCaptureType::default().0
+        }),  Some(types::RefundsData {
+            refund_amount: 50,
+            connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"})),
+            reason: Some("CUSTOMER REQUEST".to_string()),
+            ..utils::PaymentRefundType::default().0
+        }), ForteTest::get_payment_info())
         .await
         .unwrap();
     assert_eq!(
