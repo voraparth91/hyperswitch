@@ -172,13 +172,19 @@ async fn should_sync_authorized_payment() {
 async fn should_void_authorized_payment() {
     let response = CONNECTOR
         .authorize_and_void_payment(
-            None,
+            ForteTest::get_payment_authorize_data(
+                "4242424242424242",
+                "10",
+                "2025",
+                "123",
+                enums::CaptureMethod::Manual,
+            ),
             Some(types::PaymentsCancelData {
                 connector_transaction_id: String::from(""),
                 cancellation_reason: Some("requested_by_customer".to_string()),
-                connector_metadata: Some(serde_json::json!({"location_id":"123", "org_id":"123"}))
+                connector_metadata: Some(serde_json::json!({"authorization_code": "AUTHCODE"}))
             }),
-            None,
+            ForteTest::get_payment_info(),
         )
         .await
         .expect("Void payment response");
